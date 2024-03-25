@@ -1,4 +1,4 @@
-/* $OpenBSD: m_sigver.c,v 1.14 2023/11/29 21:35:57 tb Exp $ */
+/* $OpenBSD: m_sigver.c,v 1.18 2024/03/25 11:41:40 joshua Exp $ */
 /* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
  * project 2006.
  */
@@ -141,51 +141,62 @@ EVP_DigestVerifyInit(EVP_MD_CTX *ctx, EVP_PKEY_CTX **pctx, const EVP_MD *type,
 	return do_sigver_init(ctx, pctx, type, pkey, 1);
 }
 
+static int
+evp_digestsignfinal_sigctx_custom(EVP_MD_CTX *ctx, unsigned char *sigret,
+    size_t *siglen)
+{
+	EVP_PKEY_CTX *pctx = ctx->pctx;
+	EVP_PKEY_CTX *dctx = NULL;
+	int ret = 0;
+
+	if (sigret == NULL)
+		return pctx->pmeth->signctx(pctx, sigret, siglen, ctx);
+
+	/* XXX - support EVP_MD_CTX_FLAG_FINALISE? */
+	if ((dctx = EVP_PKEY_CTX_dup(pctx)) == NULL)
+		goto err;
+
+	if (!dctx->pmeth->signctx(dctx, sigret, siglen, ctx))
+		goto err;
+
+	ret = 1;
+
+ err:
+	EVP_PKEY_CTX_free(dctx);
+
+	return ret;
+}
+
 int
 EVP_DigestSignFinal(EVP_MD_CTX *ctx, unsigned char *sigret, size_t *siglen)
 {
 	EVP_PKEY_CTX *pctx = ctx->pctx;
-	int sctx;
 	int r = 0;
 
-	if (pctx->pmeth->flags & EVP_PKEY_FLAG_SIGCTX_CUSTOM) {
-		EVP_PKEY_CTX *dctx;
+	if (pctx->pmeth->flags & EVP_PKEY_FLAG_SIGCTX_CUSTOM)
+		return evp_digestsignfinal_sigctx_custom(ctx, sigret, siglen);
 
-		if (sigret == NULL)
-			return pctx->pmeth->signctx(pctx, sigret, siglen, ctx);
-
-		/* XXX - support EVP_MD_CTX_FLAG_FINALISE? */
-		if ((dctx = EVP_PKEY_CTX_dup(ctx->pctx)) == NULL)
-			return 0;
-		r = dctx->pmeth->signctx(dctx, sigret, siglen, ctx);
-		EVP_PKEY_CTX_free(dctx);
-
-		return r;
-	}
-
-	if (ctx->pctx->pmeth->signctx)
-		sctx = 1;
-	else
-		sctx = 0;
 	if (sigret) {
 		EVP_MD_CTX tmp_ctx;
 		unsigned char md[EVP_MAX_MD_SIZE];
 		unsigned int mdlen = 0;
-		EVP_MD_CTX_init(&tmp_ctx);
+		EVP_MD_CTX_legacy_clear(&tmp_ctx);
 		if (!EVP_MD_CTX_copy_ex(&tmp_ctx, ctx))
 			return 0;
-		if (sctx)
+		if (ctx->pctx->pmeth->signctx != NULL) {
 			r = tmp_ctx.pctx->pmeth->signctx(tmp_ctx.pctx,
 			    sigret, siglen, &tmp_ctx);
-		else
-			r = EVP_DigestFinal_ex(&tmp_ctx, md, &mdlen);
+			EVP_MD_CTX_cleanup(&tmp_ctx);
+			return r;
+		}
+		r = EVP_DigestFinal_ex(&tmp_ctx, md, &mdlen);
 		EVP_MD_CTX_cleanup(&tmp_ctx);
-		if (sctx || !r)
+		if (!r)
 			return r;
 		if (EVP_PKEY_sign(ctx->pctx, sigret, siglen, md, mdlen) <= 0)
 			return 0;
 	} else {
-		if (sctx) {
+		if (ctx->pctx->pmeth->signctx != NULL) {
 			if (ctx->pctx->pmeth->signctx(ctx->pctx, sigret,
 			    siglen, ctx) <= 0)
 				return 0;
@@ -228,7 +239,7 @@ EVP_DigestVerifyFinal(EVP_MD_CTX *ctx, const unsigned char *sig, size_t siglen)
 		vctx = 1;
 	else
 		vctx = 0;
-	EVP_MD_CTX_init(&tmp_ctx);
+	EVP_MD_CTX_legacy_clear(&tmp_ctx);
 	if (!EVP_MD_CTX_copy_ex(&tmp_ctx, ctx))
 		return -1;
 	if (vctx) {

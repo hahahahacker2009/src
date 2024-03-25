@@ -1,4 +1,4 @@
-/*	$OpenBSD: main.c,v 1.249 2024/02/16 11:55:42 tb Exp $ */
+/*	$OpenBSD: main.c,v 1.255 2024/03/22 03:38:12 job Exp $ */
 /*
  * Copyright (c) 2021 Claudio Jeker <claudio@openbsd.org>
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
@@ -72,7 +72,13 @@ int	filemode;
 int	shortlistmode;
 int	rrdpon = 1;
 int	repo_timeout;
+int	experimental;
 time_t	deadline;
+
+/* 9999-12-31 23:59:59 UTC */
+#define X509_TIME_MAX 253402300799LL
+/* 0000-01-01 00:00:00 UTC */
+#define X509_TIME_MIN -62167219200LL
 
 int64_t  evaluation_time = X509_TIME_MIN;
 
@@ -113,6 +119,18 @@ getmonotime(void)
 	return (ts.tv_sec);
 }
 
+/*
+ * Time - Evaluation time is used as the current time if it is
+ * larger than X509_TIME_MIN, otherwise the system time is used.
+ */
+time_t
+get_current_time(void)
+{
+	if (evaluation_time > X509_TIME_MIN)
+		return (time_t)evaluation_time;
+	return time(NULL);
+}
+
 void
 entity_free(struct entity *ent)
 {
@@ -124,14 +142,6 @@ entity_free(struct entity *ent)
 	free(ent->mftaki);
 	free(ent->data);
 	free(ent);
-}
-
-time_t
-get_current_time(void)
-{
-	if (evaluation_time > X509_TIME_MIN)
-		return (time_t)evaluation_time;
-	return time(NULL);
 }
 
 /*
@@ -423,7 +433,7 @@ queue_add_file(const char *file, enum rtype type, int talid)
 	char		*nfile;
 	size_t		 len = 0;
 
-	if (!filemode || strncmp(file, "rsync://", strlen("rsync://")) != 0) {
+	if (!filemode || strncmp(file, RSYNC_PROTO, RSYNC_PROTO_LEN) != 0) {
 		buf = load_file(file, &len);
 		if (buf == NULL)
 			err(1, "%s", file);
@@ -484,7 +494,7 @@ queue_add_from_cert(const struct cert *cert)
 	size_t			 repourisz;
 	int			 shortlisted = 0;
 
-	if (strncmp(cert->repo, "rsync://", 8) != 0)
+	if (strncmp(cert->repo, RSYNC_PROTO, RSYNC_PROTO_LEN) != 0)
 		errx(1, "unexpected protocol");
 	host = cert->repo + 8;
 
@@ -548,7 +558,8 @@ queue_add_from_cert(const struct cert *cert)
  */
 static void
 entity_process(struct ibuf *b, struct stats *st, struct vrp_tree *tree,
-    struct brk_tree *brktree, struct vap_tree *vaptree)
+    struct brk_tree *brktree, struct vap_tree *vaptree,
+    struct vsp_tree *vsptree)
 {
 	enum rtype	 type;
 	struct tal	*tal;
@@ -556,6 +567,7 @@ entity_process(struct ibuf *b, struct stats *st, struct vrp_tree *tree,
 	struct mft	*mft;
 	struct roa	*roa;
 	struct aspa	*aspa;
+	struct spl	*spl;
 	struct repo	*rp;
 	char		*file;
 	time_t		 mtime;
@@ -586,6 +598,7 @@ entity_process(struct ibuf *b, struct stats *st, struct vrp_tree *tree,
 
 	rp = repo_byid(id);
 	repo_stat_inc(rp, talid, type, STYPE_OK);
+	repostats_new_files_inc(rp, file);
 	switch (type) {
 	case RTYPE_TAL:
 		st->tals++;
@@ -655,6 +668,20 @@ entity_process(struct ibuf *b, struct stats *st, struct vrp_tree *tree,
 		else
 			repo_stat_inc(rp, talid, type, STYPE_INVALID);
 		aspa_free(aspa);
+		break;
+	case RTYPE_SPL:
+		io_read_buf(b, &c, sizeof(c));
+		if (c == 0) {
+			if (experimental)
+				repo_stat_inc(rp, talid, type, STYPE_FAIL);
+			break;
+		}
+		spl = spl_read(b);
+		if (spl->valid)
+			spl_insert_vsps(vsptree, spl, rp);
+		else
+			repo_stat_inc(rp, talid, type, STYPE_INVALID);
+		spl_free(spl);
 		break;
 	case RTYPE_TAK:
 		break;
@@ -746,6 +773,11 @@ sum_stats(const struct repo *rp, const struct repotalstats *in, void *arg)
 	out->vaps += in->vaps;
 	out->vaps_uniqs += in->vaps_uniqs;
 	out->vaps_pas += in->vaps_pas;
+	out->spls += in->spls;
+	out->spls_fail += in->spls_fail;
+	out->spls_invalid += in->spls_invalid;
+	out->vsps += in->vsps;
+	out->vsps_uniqs += in->vsps_uniqs;
 }
 
 static void
@@ -757,6 +789,7 @@ sum_repostats(const struct repo *rp, const struct repostats *in, void *arg)
 	out->extra_files += in->extra_files;
 	out->del_extra_files += in->del_extra_files;
 	out->del_dirs += in->del_dirs;
+	out->new_files += in->new_files;
 	timespecadd(&in->sync_time, &out->sync_time, &out->sync_time);
 }
 
@@ -864,9 +897,9 @@ load_shortlist(const char *fqdn)
 static void
 check_fs_size(int fd, const char *cachedir)
 {
-	struct statvfs	fs;
-	const long long	minsize = 500 * 1024 * 1024;
-	const long long	minnode = 300 * 1000;
+	struct statvfs		fs;
+	unsigned long long	minsize = 500 * 1024 * 1024;
+	unsigned long long	minnode = 300 * 1000;
 
 	if (fstatvfs(fd, &fs) == -1)
 		err(1, "statfs %s", cachedir);
@@ -876,13 +909,13 @@ check_fs_size(int fd, const char *cachedir)
 		fprintf(stderr, "WARNING: rpki-client may need more than "
 		    "the available disk space\n"
 		    "on the file-system holding %s.\n", cachedir);
-		fprintf(stderr, "available space: %lldkB, "
-		    "suggested minimum %lldkB\n",
-		    (long long)fs.f_bavail * fs.f_frsize / 1024,
+		fprintf(stderr, "available space: %llukB, "
+		    "suggested minimum %llukB\n",
+		    (unsigned long long)fs.f_bavail * fs.f_frsize / 1024,
 		    minsize / 1024);
-		fprintf(stderr, "available inodes %lld, "
-		    "suggested minimum %lld\n\n",
-		    (long long)fs.f_favail, minnode);
+		fprintf(stderr, "available inodes: %llu, "
+		    "suggested minimum: %llu\n\n",
+		    (unsigned long long)fs.f_favail, minnode);
 		fflush(stderr);
 	}
 }
@@ -938,6 +971,7 @@ main(int argc, char *argv[])
 	const char	*errs, *name;
 	const char	*skiplistfile = NULL;
 	struct vrp_tree	 vrps = RB_INITIALIZER(&vrps);
+	struct vsp_tree	 vsps = RB_INITIALIZER(&vsps);
 	struct brk_tree	 brks = RB_INITIALIZER(&brks);
 	struct vap_tree	 vaps = RB_INITIALIZER(&vaps);
 	struct rusage	 ru;
@@ -966,7 +1000,7 @@ main(int argc, char *argv[])
 	    "proc exec unveil", NULL) == -1)
 		err(1, "pledge");
 
-	while ((c = getopt(argc, argv, "Ab:Bcd:e:fH:jmnoP:rRs:S:t:T:vV")) != -1)
+	while ((c = getopt(argc, argv, "Ab:Bcd:e:fH:jmnoP:rRs:S:t:T:vVx")) != -1)
 		switch (c) {
 		case 'A':
 			excludeaspa = 1;
@@ -1044,6 +1078,9 @@ main(int argc, char *argv[])
 		case 'V':
 			fprintf(stderr, "rpki-client %s\n", RPKI_VERSION);
 			return 0;
+		case 'x':
+			experimental = 1;
+			break;
 		default:
 			goto usage;
 		}
@@ -1332,7 +1369,8 @@ main(int argc, char *argv[])
 		if ((pfd[0].revents & POLLIN)) {
 			b = io_buf_read(proc, &procbuf);
 			if (b != NULL) {
-				entity_process(b, &stats, &vrps, &brks, &vaps);
+				entity_process(b, &stats, &vrps, &brks, &vaps,
+				    &vsps);
 				ibuf_free(b);
 			}
 		}
@@ -1425,7 +1463,7 @@ main(int argc, char *argv[])
 	}
 	repo_stats_collect(sum_repostats, &stats.repo_stats);
 
-	if (outputfiles(&vrps, &brks, &vaps, &stats))
+	if (outputfiles(&vrps, &brks, &vaps, &vsps, &stats))
 		rc = 1;
 
 	printf("Processing time %lld seconds "
@@ -1442,6 +1480,9 @@ main(int argc, char *argv[])
 	    "invalid)\n", stats.repo_tal_stats.aspas,
 	    stats.repo_tal_stats.aspas_fail,
 	    stats.repo_tal_stats.aspas_invalid);
+	printf("Signed Prefix Lists: %u (%u failed parse, %u invalid)\n",
+	    stats.repo_tal_stats.spls, stats.repo_tal_stats.spls_fail,
+	    stats.repo_tal_stats.spls_invalid);
 	printf("BGPsec Router Certificates: %u\n", stats.repo_tal_stats.brks);
 	printf("Certificates: %u (%u invalid)\n",
 	    stats.repo_tal_stats.certs, stats.repo_tal_stats.certs_fail);
@@ -1453,6 +1494,8 @@ main(int argc, char *argv[])
 	printf("Ghostbuster records: %u\n", stats.repo_tal_stats.gbrs);
 	printf("Trust Anchor Keys: %u\n", stats.repo_tal_stats.taks);
 	printf("Repositories: %u\n", stats.repos);
+	printf("New files moved into validated cache: %u\n",
+	    stats.repo_stats.new_files);
 	printf("Cleanup: removed %u files, %u directories\n"
 	    "Repository cleanup: kept %u and removed %u superfluous files\n",
 	    stats.repo_stats.del_files, stats.repo_stats.del_dirs,
@@ -1461,6 +1504,8 @@ main(int argc, char *argv[])
 	    stats.repo_tal_stats.vrps_uniqs);
 	printf("VAP Entries: %u (%u unique)\n", stats.repo_tal_stats.vaps,
 	    stats.repo_tal_stats.vaps_uniqs);
+	printf("VSP Entries: %u (%u unique)\n", stats.repo_tal_stats.vsps,
+	    stats.repo_tal_stats.vsps_uniqs);
 
 	/* Memory cleanup. */
 	repo_free();
@@ -1469,7 +1514,7 @@ main(int argc, char *argv[])
 
 usage:
 	fprintf(stderr,
-	    "usage: rpki-client [-ABcjmnoRrVv] [-b sourceaddr] [-d cachedir]"
+	    "usage: rpki-client [-ABcjmnoRrVvx] [-b sourceaddr] [-d cachedir]"
 	    " [-e rsync_prog]\n"
 	    "                   [-H fqdn] [-P epoch] [-S skiplist] [-s timeout]"
 	    " [-T table]\n"

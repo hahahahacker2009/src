@@ -1,4 +1,4 @@
-/*	$OpenBSD: repo.c,v 1.52 2024/02/03 14:30:47 job Exp $ */
+/*	$OpenBSD: repo.c,v 1.55 2024/03/22 03:38:12 job Exp $ */
 /*
  * Copyright (c) 2021 Claudio Jeker <claudio@openbsd.org>
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
@@ -338,7 +338,7 @@ ta_fetch(struct tarepo *tr)
 	if (!rrdpon) {
 		for (; tr->uriidx < tr->urisz; tr->uriidx++) {
 			if (strncasecmp(tr->uri[tr->uriidx],
-			    "rsync://", 8) == 0)
+			    RSYNC_PROTO, RSYNC_PROTO_LEN) == 0)
 				break;
 		}
 	}
@@ -353,7 +353,8 @@ ta_fetch(struct tarepo *tr)
 
 	logx("ta/%s: pulling from %s", tr->descr, tr->uri[tr->uriidx]);
 
-	if (strncasecmp(tr->uri[tr->uriidx], "rsync://", 8) == 0) {
+	if (strncasecmp(tr->uri[tr->uriidx], RSYNC_PROTO,
+	    RSYNC_PROTO_LEN) == 0) {
 		/*
 		 * Create destination location.
 		 * Build up the tree to this point.
@@ -499,9 +500,9 @@ rrdp_filename(const struct rrdprepo *rr, const char *uri, int valid)
 	char *nfile;
 	const char *dir = rr->basedir;
 
-	if (!valid_uri(uri, strlen(uri), "rsync://"))
+	if (!valid_uri(uri, strlen(uri), RSYNC_PROTO))
 		errx(1, "%s: bad URI %s", rr->basedir, uri);
-	uri += strlen("rsync://");	/* skip proto */
+	uri += RSYNC_PROTO_LEN;	/* skip proto */
 	if (valid) {
 		if ((nfile = strdup(uri)) == NULL)
 			err(1, NULL);
@@ -1301,7 +1302,8 @@ repo_proto(const struct repo *rp)
 	if (rp->ta != NULL) {
 		const struct tarepo *tr = rp->ta;
 		if (tr->uriidx < tr->urisz &&
-		    strncasecmp(tr->uri[tr->uriidx], "rsync://", 8) == 0)
+		    strncasecmp(tr->uri[tr->uriidx], RSYNC_PROTO,
+		    RSYNC_PROTO_LEN) == 0)
 			return "rsync";
 		else
 			return "https";
@@ -1404,6 +1406,18 @@ repo_check_timeout(int timeout)
 }
 
 /*
+ * Update repo-specific stats when files are going to be moved
+ * from DIR_TEMP to DIR_VALID.
+ */
+void
+repostats_new_files_inc(struct repo *rp, const char *file)
+{
+	if (strncmp(file, ".rsync/", strlen(".rsync/")) == 0 ||
+	    strncmp(file, ".rrdp/", strlen(".rrdp/")) == 0)
+		rp->repostats.new_files++;
+}
+
+/*
  * Update stats object of repository depending on rtype and subtype.
  */
 void
@@ -1475,6 +1489,30 @@ repo_stat_inc(struct repo *rp, int talid, enum rtype type, enum stype subtype)
 			break;
 		case STYPE_PROVIDERS:
 			rp->stats[talid].vaps_pas++;
+			break;
+		default:
+			break;
+		}
+		break;
+	case RTYPE_SPL:
+		switch (subtype) {
+		case STYPE_OK:
+			rp->stats[talid].spls++;
+			break;
+		case STYPE_FAIL:
+			rp->stats[talid].spls_fail++;
+			break;
+		case STYPE_INVALID:
+			rp->stats[talid].spls_invalid++;
+			break;
+		case STYPE_TOTAL:
+			rp->stats[talid].vsps++;
+			break;
+		case STYPE_UNIQUE:
+			rp->stats[talid].vsps_uniqs++;
+			break;
+		case STYPE_DEC_UNIQUE:
+			rp->stats[talid].vsps_uniqs--;
 			break;
 		default:
 			break;

@@ -1,4 +1,4 @@
-/* $OpenBSD: conf_mod.c,v 1.28 2023/07/20 15:05:30 tb Exp $ */
+/* $OpenBSD: conf_mod.c,v 1.36 2024/03/20 22:11:07 tb Exp $ */
 /* Written by Stephen Henson (steve@openssl.org) for the OpenSSL
  * project 2001.
  */
@@ -86,7 +86,7 @@ struct conf_module_st {
  */
 
 struct conf_imodule_st {
-	CONF_MODULE *pmod;
+	CONF_MODULE *mod;
 	char *name;
 	char *value;
 	unsigned long flags;
@@ -96,14 +96,15 @@ struct conf_imodule_st {
 static STACK_OF(CONF_MODULE) *supported_modules = NULL;
 static STACK_OF(CONF_IMODULE) *initialized_modules = NULL;
 
-static void module_free(CONF_MODULE *md);
+static void module_free(CONF_MODULE *mod);
+static void imodule_free(CONF_IMODULE *imod);
 static void module_finish(CONF_IMODULE *imod);
 static int module_run(const CONF *cnf, char *name, char *value,
     unsigned long flags);
-static CONF_MODULE *module_add(const char *name, conf_init_func *ifunc,
+static int module_add(const char *name, conf_init_func *ifunc,
     conf_finish_func *ffunc);
 static CONF_MODULE *module_find(char *name);
-static int module_init(CONF_MODULE *pmod, char *name, char *value,
+static int module_init(CONF_MODULE *mod, char *name, char *value,
     const CONF *cnf);
 
 /* Main function: load modules from a CONF structure */
@@ -188,10 +189,10 @@ err:
 static int
 module_run(const CONF *cnf, char *name, char *value, unsigned long flags)
 {
-	CONF_MODULE *md;
+	CONF_MODULE *mod;
 	int ret;
 
-	if ((md = module_find(name)) == NULL) {
+	if ((mod = module_find(name)) == NULL) {
 		if (!(flags & CONF_MFLAGS_SILENT)) {
 			CONFerror(CONF_R_UNKNOWN_MODULE_NAME);
 			ERR_asprintf_error_data("module=%s", name);
@@ -199,7 +200,7 @@ module_run(const CONF *cnf, char *name, char *value, unsigned long flags)
 		return -1;
 	}
 
-	ret = module_init(md, name, value, cnf);
+	ret = module_init(mod, name, value, cnf);
 
 	if (ret <= 0) {
 		if (!(flags & CONF_MFLAGS_SILENT)) {
@@ -213,33 +214,37 @@ module_run(const CONF *cnf, char *name, char *value, unsigned long flags)
 	return ret;
 }
 
-/* add module to list */
-static CONF_MODULE *
+static int
 module_add(const char *name, conf_init_func *ifunc, conf_finish_func *ffunc)
 {
-	CONF_MODULE *tmod = NULL;
+	CONF_MODULE *mod = NULL;
+	int ret = 0;
 
 	if (name == NULL)
-		return NULL;
+		goto err;
+
 	if (supported_modules == NULL)
 		supported_modules = sk_CONF_MODULE_new_null();
 	if (supported_modules == NULL)
-		return NULL;
-	tmod = malloc(sizeof(CONF_MODULE));
-	if (tmod == NULL)
-		return NULL;
+		goto err;
 
-	tmod->name = strdup(name);
-	tmod->init = ifunc;
-	tmod->finish = ffunc;
-	tmod->links = 0;
+	if ((mod = calloc(1, sizeof(*mod))) == NULL)
+		goto err;
+	if ((mod->name = strdup(name)) == NULL)
+		goto err;
+	mod->init = ifunc;
+	mod->finish = ffunc;
 
-	if (!sk_CONF_MODULE_push(supported_modules, tmod)) {
-		free(tmod);
-		return NULL;
-	}
+	if (!sk_CONF_MODULE_push(supported_modules, mod))
+		goto err;
+	mod = NULL;
 
-	return tmod;
+	ret = 1;
+
+ err:
+	module_free(mod);
+
+	return ret;
 }
 
 /* Find a module from the list. We allow module names of the
@@ -250,7 +255,7 @@ module_add(const char *name, conf_init_func *ifunc, conf_finish_func *ffunc)
 static CONF_MODULE *
 module_find(char *name)
 {
-	CONF_MODULE *tmod;
+	CONF_MODULE *mod;
 	int i, nchar;
 	char *p;
 
@@ -262,9 +267,9 @@ module_find(char *name)
 		nchar = strlen(name);
 
 	for (i = 0; i < sk_CONF_MODULE_num(supported_modules); i++) {
-		tmod = sk_CONF_MODULE_value(supported_modules, i);
-		if (!strncmp(tmod->name, name, nchar))
-			return tmod;
+		mod = sk_CONF_MODULE_value(supported_modules, i);
+		if (!strncmp(mod->name, name, nchar))
+			return mod;
 	}
 
 	return NULL;
@@ -272,7 +277,7 @@ module_find(char *name)
 
 /* initialize a module */
 static int
-module_init(CONF_MODULE *pmod, char *name, char *value, const CONF *cnf)
+module_init(CONF_MODULE *mod, char *name, char *value, const CONF *cnf)
 {
 	int ret = 1;
 	int init_called = 0;
@@ -283,7 +288,7 @@ module_init(CONF_MODULE *pmod, char *name, char *value, const CONF *cnf)
 	if (!imod)
 		goto err;
 
-	imod->pmod = pmod;
+	imod->mod = mod;
 	imod->name = name ? strdup(name) : NULL;
 	imod->value = value ? strdup(value) : NULL;
 	imod->usr_data = NULL;
@@ -292,8 +297,8 @@ module_init(CONF_MODULE *pmod, char *name, char *value, const CONF *cnf)
 		goto memerr;
 
 	/* Try to initialize module */
-	if (pmod->init) {
-		ret = pmod->init(imod, cnf);
+	if (mod->init) {
+		ret = mod->init(imod, cnf);
 		init_called = 1;
 		/* Error occurred, exit */
 		if (ret <= 0)
@@ -313,14 +318,14 @@ module_init(CONF_MODULE *pmod, char *name, char *value, const CONF *cnf)
 		goto err;
 	}
 
-	pmod->links++;
+	mod->links++;
 
 	return ret;
 
 err:
 	/* We've started the module so we'd better finish it */
-	if (pmod->finish && init_called)
-		pmod->finish(imod);
+	if (mod->finish && init_called)
+		mod->finish(imod);
 
 memerr:
 	if (imod) {
@@ -341,18 +346,18 @@ void
 CONF_modules_unload(int all)
 {
 	int i;
-	CONF_MODULE *md;
+	CONF_MODULE *mod;
 
 	CONF_modules_finish();
 
 	/* unload modules in reverse order */
 	for (i = sk_CONF_MODULE_num(supported_modules) - 1; i >= 0; i--) {
-		md = sk_CONF_MODULE_value(supported_modules, i);
+		mod = sk_CONF_MODULE_value(supported_modules, i);
 		if (!all)
 			continue;
 		/* Since we're working in reverse this is OK */
 		(void)sk_CONF_MODULE_delete(supported_modules, i);
-		module_free(md);
+		module_free(mod);
 	}
 	if (sk_CONF_MODULE_num(supported_modules) == 0) {
 		sk_CONF_MODULE_free(supported_modules);
@@ -362,10 +367,24 @@ CONF_modules_unload(int all)
 
 /* unload a single module */
 static void
-module_free(CONF_MODULE *md)
+module_free(CONF_MODULE *mod)
 {
-	free(md->name);
-	free(md);
+	if (mod == NULL)
+		return;
+
+	free(mod->name);
+	free(mod);
+}
+
+static void
+imodule_free(CONF_IMODULE *imod)
+{
+	if (imod == NULL)
+		return;
+
+	free(imod->name);
+	free(imod->value);
+	free(imod);
 }
 
 /* finish and free up all modules instances */
@@ -388,12 +407,11 @@ CONF_modules_finish(void)
 static void
 module_finish(CONF_IMODULE *imod)
 {
-	if (imod->pmod->finish)
-		imod->pmod->finish(imod);
-	imod->pmod->links--;
-	free(imod->name);
-	free(imod->value);
-	free(imod);
+	if (imod->mod->finish)
+		imod->mod->finish(imod);
+	imod->mod->links--;
+
+	imodule_free(imod);
 }
 
 /* Add a static module to OpenSSL */
@@ -401,7 +419,7 @@ module_finish(CONF_IMODULE *imod)
 int
 CONF_module_add(const char *name, conf_init_func *ifunc, conf_finish_func *ffunc)
 {
-	return module_add(name, ifunc, ffunc) != NULL;
+	return module_add(name, ifunc, ffunc);
 }
 
 void
@@ -414,57 +432,57 @@ CONF_modules_free(void)
 /* Utility functions */
 
 const char *
-CONF_imodule_get_name(const CONF_IMODULE *md)
+CONF_imodule_get_name(const CONF_IMODULE *imod)
 {
-	return md->name;
+	return imod->name;
 }
 
 const char *
-CONF_imodule_get_value(const CONF_IMODULE *md)
+CONF_imodule_get_value(const CONF_IMODULE *imod)
 {
-	return md->value;
+	return imod->value;
 }
 
 void *
-CONF_imodule_get_usr_data(const CONF_IMODULE *md)
+CONF_imodule_get_usr_data(const CONF_IMODULE *imod)
 {
-	return md->usr_data;
+	return imod->usr_data;
 }
 
 void
-CONF_imodule_set_usr_data(CONF_IMODULE *md, void *usr_data)
+CONF_imodule_set_usr_data(CONF_IMODULE *imod, void *usr_data)
 {
-	md->usr_data = usr_data;
+	imod->usr_data = usr_data;
 }
 
 CONF_MODULE *
-CONF_imodule_get_module(const CONF_IMODULE *md)
+CONF_imodule_get_module(const CONF_IMODULE *imod)
 {
-	return md->pmod;
+	return imod->mod;
 }
 
 unsigned long
-CONF_imodule_get_flags(const CONF_IMODULE *md)
+CONF_imodule_get_flags(const CONF_IMODULE *imod)
 {
-	return md->flags;
+	return imod->flags;
 }
 
 void
-CONF_imodule_set_flags(CONF_IMODULE *md, unsigned long flags)
+CONF_imodule_set_flags(CONF_IMODULE *imod, unsigned long flags)
 {
-	md->flags = flags;
+	imod->flags = flags;
 }
 
 void *
-CONF_module_get_usr_data(CONF_MODULE *pmod)
+CONF_module_get_usr_data(CONF_MODULE *mod)
 {
-	return pmod->usr_data;
+	return mod->usr_data;
 }
 
 void
-CONF_module_set_usr_data(CONF_MODULE *pmod, void *usr_data)
+CONF_module_set_usr_data(CONF_MODULE *mod, void *usr_data)
 {
-	pmod->usr_data = usr_data;
+	mod->usr_data = usr_data;
 }
 
 /* Return default config file name */

@@ -1,4 +1,4 @@
-/*	$OpenBSD: rde.c,v 1.622 2024/02/03 00:11:34 jsg Exp $ */
+/*	$OpenBSD: rde.c,v 1.624 2024/03/20 09:35:46 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -442,7 +442,7 @@ rde_dispatch_imsg_session(struct imsgbuf *imsgbuf)
 				log_warnx("%s: wrong imsg len", __func__);
 				break;
 			}
-			if (aid >= AID_MAX) {
+			if (aid < AID_MIN || aid >= AID_MAX) {
 				log_warnx("%s: bad AID", __func__);
 				break;
 			}
@@ -1240,10 +1240,17 @@ rde_dispatch_imsg_rtr(struct imsgbuf *imsgbuf)
 			if (imsg_get_data(&imsg, &roa, sizeof(roa)) == -1)
 				fatalx("IMSG_RECONF_ROA_ITEM bad len");
 			if (trie_roa_add(&roa_new.th, &roa) != 0) {
+#if defined(__GNUC__) && __GNUC__ < 4
+				struct bgpd_addr p = {
+					.aid = roa.aid
+				};
+				p.v6 = roa.prefix.inet6;
+#else
 				struct bgpd_addr p = {
 					.aid = roa.aid,
 					.v6 = roa.prefix.inet6
 				};
+#endif
 				log_warnx("trie_roa_add %s/%u failed",
 				    log_addr(&p), roa.prefixlen);
 			}
@@ -1321,7 +1328,7 @@ rde_dispatch_imsg_peer(struct rde_peer *peer, void *bula)
 			log_warnx("route refresh: wrong imsg len");
 			break;
 		}
-		if (rr.aid >= AID_MAX) {
+		if (rr.aid < AID_MIN || rr.aid >= AID_MAX) {
 			log_peer_warnx(&peer->conf,
 			    "route refresh: bad AID %d", rr.aid);
 			break;
@@ -3319,7 +3326,7 @@ rde_update_queue_pending(void)
 			continue;
 		if (peer->throttled)
 			continue;
-		for (aid = 0; aid < AID_MAX; aid++) {
+		for (aid = AID_MIN; aid < AID_MAX; aid++) {
 			if (!RB_EMPTY(&peer->updates[aid]) ||
 			    !RB_EMPTY(&peer->withdraws[aid]))
 				return 1;
@@ -3814,7 +3821,7 @@ rde_softreconfig_in_done(void *arg, uint8_t dummy)
 				peer->reconf_out = 0;
 			} else if (peer->export_type == EXPORT_DEFAULT_ROUTE) {
 				/* just resend the default route */
-				for (aid = 0; aid < AID_MAX; aid++) {
+				for (aid = AID_MIN; aid < AID_MAX; aid++) {
 					if (peer->capa.mp[aid])
 						up_generate_default(peer, aid);
 				}
@@ -3824,7 +3831,7 @@ rde_softreconfig_in_done(void *arg, uint8_t dummy)
 				    RECONF_RELOAD;
 		} else if (peer->reconf_rib) {
 			/* dump the full table to neighbors that changed rib */
-			for (aid = 0; aid < AID_MAX; aid++) {
+			for (aid = AID_MIN; aid < AID_MAX; aid++) {
 				if (peer->capa.mp[aid])
 					peer_dump(peer, aid);
 			}

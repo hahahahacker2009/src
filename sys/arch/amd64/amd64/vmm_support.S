@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmm_support.S,v 1.24 2023/11/28 00:17:48 dv Exp $	*/
+/*	$OpenBSD: vmm_support.S,v 1.26 2024/03/17 05:49:41 guenther Exp $	*/
 /*
  * Copyright (c) 2014 Mike Larkin <mlarkin@openbsd.org>
  *
@@ -225,12 +225,6 @@ skip_init:
 	pushq	%rax
 	pushq	%rdx
 
-	/* XXX - unused? */
-	movq	$MSR_CSTAR, %rcx
-	rdmsr
-	pushq	%rax
-	pushq	%rdx
-
 	movq	$MSR_SFMASK, %rcx
 	rdmsr
 	pushq	%rax
@@ -253,6 +247,23 @@ skip_init:
 	 * XXX information yet to make the correct choices.
 	 */
 	CODEPATCH_START
+	xorl	%eax,%eax
+	xorl	%ebx,%ebx
+	xorl	%ecx,%ecx
+	xorl	%edx,%edx
+	xorl	%esi,%esi
+	xorl	%edi,%edi
+	xorl	%ebp,%ebp
+	/*
+	 * r8 is a boolean flagging launch or resume
+	 * r9 is 0-2 about the CPU
+	 */
+	xorl	%r10d,%r10d
+	xorl	%r11d,%r11d
+	xorl	%r12d,%r12d
+	xorl	%r13d,%r13d
+	xorl	%r14d,%r14d
+	xorl	%r15d,%r15d
 	subq	$8, %rsp
 	movw	%ds, (%rsp)
 	verw	(%rsp)
@@ -483,9 +494,9 @@ restore_host:
 	movq	$MSR_SFMASK, %rcx
 	wrmsr
 
-	/* XXX - unused? */
-	popq	%rdx
-	popq	%rax
+	/* make sure guest doesn't bleed into host */
+	xorl	%edx, %edx
+	xorl	%eax, %eax
 	movq	$MSR_CSTAR, %rcx
 	wrmsr
 
@@ -580,12 +591,6 @@ ENTRY(svm_enter_guest)
 	pushq	%rdx
 
 	movq	$MSR_LSTAR, %rcx
-	rdmsr
-	pushq	%rax
-	pushq	%rdx
-
-	/* XXX - unused? */
-	movq	$MSR_CSTAR, %rcx
 	rdmsr
 	pushq	%rax
 	pushq	%rdx
@@ -696,9 +701,9 @@ restore_host_svm:
 	movq	$MSR_SFMASK, %rcx
 	wrmsr
 
-	/* XXX - unused? */
-	popq	%rdx
-	popq	%rax
+	/* make sure guest doesn't bleed into host */
+	xorl	%edx, %edx
+	xorl	%eax, %eax
 	movq	$MSR_CSTAR, %rcx
 	wrmsr
 

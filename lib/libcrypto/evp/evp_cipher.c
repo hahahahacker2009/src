@@ -1,4 +1,4 @@
-/* $OpenBSD: evp_cipher.c,v 1.17 2024/01/30 17:41:01 tb Exp $ */
+/* $OpenBSD: evp_cipher.c,v 1.21 2024/03/02 09:55:30 tb Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -613,9 +613,15 @@ EVP_CIPHER_CTX_free(EVP_CIPHER_CTX *ctx)
 }
 
 void
+EVP_CIPHER_CTX_legacy_clear(EVP_CIPHER_CTX *ctx)
+{
+	memset(ctx, 0, sizeof(*ctx));
+}
+
+int
 EVP_CIPHER_CTX_init(EVP_CIPHER_CTX *ctx)
 {
-	memset(ctx, 0, sizeof(EVP_CIPHER_CTX));
+	return EVP_CIPHER_CTX_cleanup(ctx);
 }
 
 int
@@ -798,10 +804,6 @@ EVP_CIPHER_CTX_key_length(const EVP_CIPHER_CTX *ctx)
 int
 EVP_CIPHER_CTX_set_key_length(EVP_CIPHER_CTX *ctx, int key_len)
 {
-	/* XXX - remove this. It's unused. */
-	if (ctx->cipher->flags & EVP_CIPH_CUSTOM_KEY_LENGTH)
-		return EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_SET_KEY_LENGTH,
-		    key_len, NULL);
 	if (ctx->key_len == key_len)
 		return 1;
 	if (key_len > 0 && (ctx->cipher->flags & EVP_CIPH_VARIABLE_LENGTH)) {

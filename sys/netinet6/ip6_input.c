@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip6_input.c,v 1.257 2023/12/03 20:36:24 bluhm Exp $	*/
+/*	$OpenBSD: ip6_input.c,v 1.259 2024/02/28 10:57:20 bluhm Exp $	*/
 /*	$KAME: ip6_input.c,v 1.188 2001/03/29 05:34:31 itojun Exp $	*/
 
 /*
@@ -366,7 +366,7 @@ ip6_input_if(struct mbuf **mp, int *offp, int nxt, int af, struct ifnet *ifp)
 #if NPF > 0
 	struct in6_addr odst;
 #endif
-	int srcrt = 0;
+	int pfrdr = 0;
 
 	KASSERT(*offp == 0);
 
@@ -413,7 +413,7 @@ ip6_input_if(struct mbuf **mp, int *offp, int nxt, int af, struct ifnet *ifp)
 		goto bad;
 
 	ip6 = mtod(m, struct ip6_hdr *);
-	srcrt = !IN6_ARE_ADDR_EQUAL(&odst, &ip6->ip6_dst);
+	pfrdr = !IN6_ARE_ADDR_EQUAL(&odst, &ip6->ip6_dst);
 #endif
 
 	/*
@@ -618,7 +618,7 @@ ip6_input_if(struct mbuf **mp, int *offp, int nxt, int af, struct ifnet *ifp)
 	}
 #endif /* IPSEC */
 
-	ip6_forward(m, rt, srcrt);
+	ip6_forward(m, rt, pfrdr);
 	*mp = NULL;
 	return IPPROTO_DONE;
  bad:
@@ -1451,7 +1451,6 @@ const struct sysctl_bounded_args ipv6ctl_vars[] = {
 	{ IPV6CTL_USE_DEPRECATED, &ip6_use_deprecated, 0, 1 },
 	{ IPV6CTL_MAXFRAGS, &ip6_maxfrags, 0, 1000 },
 	{ IPV6CTL_MFORWARDING, &ip6_mforwarding, 0, 1 },
-	{ IPV6CTL_MULTIPATH, &ip6_multipath, 0, 1 },
 	{ IPV6CTL_MCAST_PMTU, &ip6_mcast_pmtu, 0, 1 },
 	{ IPV6CTL_NEIGHBORGCTHRESH, &ip6_neighborgcthresh, -1, 5 * 2048 },
 	{ IPV6CTL_MAXDYNROUTES, &ip6_maxdynroutes, -1, 5 * 4096 },
@@ -1499,7 +1498,7 @@ ip6_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp,
 #ifdef MROUTING
 	extern struct mrt6stat mrt6stat;
 #endif
-	int error;
+	int oldval, error;
 
 	/* Almost all sysctl names at this level are terminal. */
 	if (namelen != 1 && name[0] != IPV6CTL_IFQUEUE)
@@ -1551,6 +1550,15 @@ ip6_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp,
 		    oldp, oldlenp, newp, newlen, &ip6intrq));
 	case IPV6CTL_SOIIKEY:
 		return (ip6_sysctl_soiikey(oldp, oldlenp, newp, newlen));
+	case IPV6CTL_MULTIPATH:
+		NET_LOCK();
+		oldval = ip6_multipath;
+		error = sysctl_int_bounded(oldp, oldlenp, newp, newlen,
+		    &ip6_multipath, 0, 1);
+		if (oldval != ip6_multipath)
+			atomic_inc_long(&rtgeneration);
+		NET_UNLOCK();
+		return (error);
 	default:
 		NET_LOCK();
 		error = sysctl_bounded_arr(ipv6ctl_vars, nitems(ipv6ctl_vars),

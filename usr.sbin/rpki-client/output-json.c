@@ -1,4 +1,4 @@
-/*	$OpenBSD: output-json.c,v 1.42 2024/02/13 20:41:22 job Exp $ */
+/*	$OpenBSD: output-json.c,v 1.46 2024/03/01 08:10:09 tb Exp $ */
 /*
  * Copyright (c) 2019 Claudio Jeker <claudio@openbsd.org>
  *
@@ -22,6 +22,8 @@
 
 #include "extern.h"
 #include "json.h"
+
+extern int experimental;
 
 static void
 outputheader_json(struct stats *st)
@@ -47,6 +49,9 @@ outputheader_json(struct stats *st)
 	json_do_int("roas", st->repo_tal_stats.roas);
 	json_do_int("failedroas", st->repo_tal_stats.roas_fail);
 	json_do_int("invalidroas", st->repo_tal_stats.roas_invalid);
+	json_do_int("spls", st->repo_tal_stats.spls);
+	json_do_int("failedspls", st->repo_tal_stats.spls_fail);
+	json_do_int("invalidspls", st->repo_tal_stats.spls_invalid);
 	json_do_int("aspas", st->repo_tal_stats.aspas);
 	json_do_int("failedaspas", st->repo_tal_stats.aspas_fail);
 	json_do_int("invalidaspas", st->repo_tal_stats.aspas_invalid);
@@ -69,8 +74,11 @@ outputheader_json(struct stats *st)
 	json_do_int("repositories", st->repos);
 	json_do_int("vrps", st->repo_tal_stats.vrps);
 	json_do_int("uniquevrps", st->repo_tal_stats.vrps_uniqs);
+	json_do_int("vsps", st->repo_tal_stats.vsps);
+	json_do_int("uniquevsps", st->repo_tal_stats.vsps_uniqs);
 	json_do_int("vaps", st->repo_tal_stats.vaps);
 	json_do_int("uniquevaps", st->repo_tal_stats.vaps_uniqs);
+	json_do_int("cachedir_new_files", st->repo_stats.new_files);
 	json_do_int("cachedir_del_files", st->repo_stats.del_files);
 	json_do_int("cachedir_del_dirs", st->repo_stats.del_dirs);
 	json_do_int("cachedir_superfluous_files", st->repo_stats.extra_files);
@@ -107,9 +115,34 @@ output_aspa(struct vap_tree *vaps)
 	json_do_end();
 }
 
+static void
+output_spl(struct vsp_tree *vsps)
+{
+	struct vsp	*vsp;
+	char		 buf[64];
+	size_t		 i;
+
+	json_do_array("signedprefixlists");
+	RB_FOREACH(vsp, vsp_tree, vsps) {
+		json_do_object("vsp", 1);
+		json_do_int("origin_as", vsp->asid);
+		json_do_array("prefixes");
+		for (i = 0; i < vsp->prefixesz; i++) {
+			ip_addr_print(&vsp->prefixes[i].prefix,
+			    vsp->prefixes[i].afi, buf, sizeof(buf));
+			json_do_string("prefix", buf);
+		}
+		json_do_end();
+		json_do_int("expires", vsp->expires);
+		json_do_string("ta", taldescs[vsp->talid]);
+		json_do_end();
+	}
+	json_do_end();
+}
+
 int
 output_json(FILE *out, struct vrp_tree *vrps, struct brk_tree *brks,
-    struct vap_tree *vaps, struct stats *st)
+    struct vap_tree *vaps, struct vsp_tree *vsps, struct stats *st)
 {
 	char		 buf[64];
 	struct vrp	*v;
@@ -146,6 +179,9 @@ output_json(FILE *out, struct vrp_tree *vrps, struct brk_tree *brks,
 
 	if (!excludeaspa)
 		output_aspa(vaps);
+
+	if (experimental)
+		output_spl(vsps);
 
 	return json_do_finish();
 }

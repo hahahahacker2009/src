@@ -1,4 +1,4 @@
-/*	$OpenBSD: machdep.c,v 1.34 2024/01/23 19:51:10 kettenis Exp $	*/
+/*	$OpenBSD: machdep.c,v 1.36 2024/02/21 04:26:45 dlg Exp $	*/
 
 /*
  * Copyright (c) 2014 Patrick Wildt <patrick@blueri.se>

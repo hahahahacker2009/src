@@ -1,4 +1,4 @@
-/* $OpenBSD: x509_vfy.c,v 1.139 2024/01/10 17:31:28 tb Exp $ */
+/* $OpenBSD: x509_vfy.c,v 1.142 2024/03/02 10:40:05 tb Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *
@@ -145,8 +145,6 @@ static int X509_cmp_time_internal(const ASN1_TIME *ctm, time_t *cmp_time,
 static int internal_verify(X509_STORE_CTX *ctx);
 static int check_key_level(X509_STORE_CTX *ctx, X509 *cert);
 static int verify_cb_cert(X509_STORE_CTX *ctx, X509 *x, int depth, int err);
-
-int ASN1_time_tm_clamp_notafter(struct tm *tm);
 
 static int
 null_callback(int ok, X509_STORE_CTX *e)
@@ -2174,15 +2172,6 @@ LCRYPTO_ALIAS(X509_STORE_CTX_set0_crls);
  * aren't set then we use the default of SSL client/server.
  */
 int
-X509_STORE_CTX_purpose_inherit(X509_STORE_CTX *ctx, int def_purpose,
-    int purpose, int trust)
-{
-	X509error(ERR_R_DISABLED);
-	return 0;
-}
-LCRYPTO_ALIAS(X509_STORE_CTX_purpose_inherit);
-
-int
 X509_STORE_CTX_set_purpose(X509_STORE_CTX *ctx, int purpose_id)
 {
 	const X509_PURPOSE *purpose;
@@ -2206,7 +2195,7 @@ X509_STORE_CTX_set_purpose(X509_STORE_CTX *ctx, int purpose_id)
 	if (ctx->param->purpose == 0)
 		ctx->param->purpose = purpose_id;
 	if (ctx->param->trust == 0)
-		ctx->param->trust = purpose->trust;
+		ctx->param->trust = X509_PURPOSE_get_trust(purpose);
 
 	return 1;
 }

@@ -2416,6 +2416,7 @@ static int amdgpu_pmops_suspend(struct device *dev)
 	struct drm_device *drm_dev = dev_get_drvdata(dev);
 	struct amdgpu_device *adev = drm_to_adev(drm_dev);
 
+	adev->suspend_complete = false;
 	if (amdgpu_acpi_is_s0ix_active(adev))
 		adev->in_s0ix = true;
 	else if (amdgpu_acpi_is_s3_active(adev))
@@ -2430,6 +2431,7 @@ static int amdgpu_pmops_suspend_noirq(struct device *dev)
 	struct drm_device *drm_dev = dev_get_drvdata(dev);
 	struct amdgpu_device *adev = drm_to_adev(drm_dev);
 
+	adev->suspend_complete = true;
 	if (amdgpu_acpi_should_gpu_reset(adev))
 		return amdgpu_asic_reset(adev);
 
@@ -3489,15 +3491,14 @@ amdgpu_attachhook(struct device *self)
 	if (adev->mode_info.mode_config_initialized &&
 	    !list_empty(&adev_to_drm(adev)->mode_config.connector_list)) {
 
-		/* OpenBSD specific backlight property on connector */
-		amdgpu_init_backlight(adev);
-
 		/*
 		 * in linux via amdgpu_pci_probe -> drm_dev_register
-		 * must be after (local) backlight property added not before
-		 * and before drm_fbdev_generic_setup()
+		 * must be before drm_fbdev_generic_setup()
 		 */
 		drm_dev_register(dev, adev->flags);
+
+		/* OpenBSD specific backlight property on connector */
+		amdgpu_init_backlight(adev);
 
 		/* select 8 bpp console on low vram cards */
 		if (adev->gmc.real_vram_size <= (32*1024*1024))

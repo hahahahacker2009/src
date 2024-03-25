@@ -1,4 +1,4 @@
-#	$OpenBSD: test-exec.sh,v 1.106 2024/02/09 08:47:42 dtucker Exp $
+#	$OpenBSD: test-exec.sh,v 1.109 2024/03/25 01:28:29 dtucker Exp $
 #	Placed in the Public Domain.
 
 #SUDO=sudo
@@ -62,6 +62,9 @@ DROPBEAR=/usr/local/bin/dropbear
 DBCLIENT=/usr/local/bin/dbclient
 DROPBEARKEY=/usr/local/bin/dropbearkey
 DROPBEARCONVERT=/usr/local/bin/dropbearconvert
+
+# So we can override this in Portable.
+TEST_SHELL="${TEST_SHELL:-/bin/sh}"
 
 # Tools used by multiple tests
 NC=nc
@@ -570,8 +573,7 @@ case "$SCRIPT" in
 *)		REGRESS_INTEROP_PUTTY=no ;;
 esac
 
-if test "$REGRESS_INTEROP_PUTTY" = "yes" ; then
-    puttysetup() {
+puttysetup() {
 	if test "x$REGRESS_INTEROP_PUTTY" != "xyes" ; then
 		skip "putty interop tests not enabled"
 	fi
@@ -609,22 +611,24 @@ if test "$REGRESS_INTEROP_PUTTY" = "yes" ; then
 	echo "ProxyLocalhost=1" >> ${OBJ}/.putty/sessions/localhost_proxy
 
 	PUTTYVER="`${PLINK} --version | awk '/plink: Release/{print $3}'`"
+	PUTTYMAJORVER="`echo ${PUTTYVER} | cut -f1 -d.`"
 	PUTTYMINORVER="`echo ${PUTTYVER} | cut -f2 -d.`"
-	verbose "plink version ${PUTTYVER} minor ${PUTTYMINORVER}"
+	verbose "plink version ${PUTTYVER} major ${PUTTYMAJORVER} minor ${PUTTYMINORVER}"
 
 	# Re-enable ssh-rsa on older PuTTY versions since they don't do newer
 	# key types.
-	if [ "$PUTTYMINORVER" -lt "76" ]; then
+	if [ "$PUTTYMAJORVER" -eq "0" ] && [ "$PUTTYMINORVER" -lt "76" ]; then
 		echo "HostKeyAlgorithms +ssh-rsa" >> ${OBJ}/sshd_proxy
 		echo "PubkeyAcceptedKeyTypes +ssh-rsa" >> ${OBJ}/sshd_proxy
 	fi
 
-	if [ "$PUTTYMINORVER" -le "64" ]; then
+	if [ "$PUTTYMAJORVER" -eq "0" ] && [ "$PUTTYMINORVER" -le "64" ]; then
 		echo "KexAlgorithms +diffie-hellman-group14-sha1" \
 		    >>${OBJ}/sshd_proxy
 	fi
-    }
-fi
+	PUTTYDIR=${OBJ}/.putty
+	export PUTTYDIR
+}
 
 REGRESS_INTEROP_DROPBEAR=no
 if test -x "$DROPBEARKEY" -a -x "$DBCLIENT" -a -x "$DROPBEARCONVERT"; then

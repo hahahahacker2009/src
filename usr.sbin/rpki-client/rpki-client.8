@@ -1,4 +1,4 @@
-.\"	$OpenBSD: rpki-client.8,v 1.100 2024/01/31 17:19:02 job Exp $
+.\"	$OpenBSD: rpki-client.8,v 1.103 2024/03/01 08:10:09 tb Exp $
 .\"
 .\" Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
 .\"
@@ -14,7 +14,7 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd $Mdocdate: January 31 2024 $
+.Dd $Mdocdate: March 1 2024 $
 .Dt RPKI-CLIENT 8
 .Os
 .Sh NAME
@@ -22,7 +22,7 @@
 .Nd RPKI validator to support BGP routing security
 .Sh SYNOPSIS
 .Nm
-.Op Fl ABcjmnoRrVv
+.Op Fl ABcjmnoRrVvx
 .Op Fl b Ar sourceaddr
 .Op Fl d Ar cachedir
 .Op Fl e Ar rsync_prog
@@ -231,6 +231,10 @@ If
 .Fl f
 is given, specify once to print more information about the encapsulated X.509
 certificate, twice to print the certificate in PEM format.
+.It Fl x
+Enable processing of experimental file formats.
+This option is implied by
+.Fl f .
 .It Ar outputdir
 The directory where
 .Nm
@@ -269,7 +273,8 @@ file imposes constraints on the Trust Anchor reachable via the same-named
 .Em .tal
 file.
 One entry per line.
-Entries can be IP prefixes, IP address ranges, AS identifiers, or AS identifier ranges.
+Entries can be IP prefixes, IP address ranges,
+AS identifiers, or AS identifier ranges.
 Ranges are a minimum and maximum separated by a hyphen
 .Pq Sq - .
 Comments can be put anywhere in the file using a hash mark
@@ -449,6 +454,12 @@ agreement regarding ARIN service restrictions.
 .Rs
 .%T Detecting RRDP Session Desynchronization
 .%U https://datatracker.ietf.org/doc/html/draft-spaghetti-sidrops-rrdp-desynchronization-00
+.%D Jan, 2024
+.Re
+.Pp
+.Rs
+.%T A profile for Signed Prefix Lists for Use in the Resource Public Key Infrastructure (RPKI)
+.%U https://datatracker.ietf.org/doc/html/draft-ietf-sidrops-rpki-prefixlist-02
 .%D Jan, 2024
 .Re
 .Sh HISTORY

@@ -1,4 +1,4 @@
-/*	$OpenBSD: parser.c,v 1.128 2024/02/03 14:30:47 job Exp $ */
+/*	$OpenBSD: parser.c,v 1.131 2024/03/19 05:04:13 tb Exp $ */
 /*
  * Copyright (c) 2019 Claudio Jeker <claudio@openbsd.org>
  * Copyright (c) 2019 Kristaps Dzonsons <kristaps@bsd.lv>
@@ -39,6 +39,8 @@
 #include "extern.h"
 
 extern int noop;
+extern int experimental;
+extern int verbose;
 
 static X509_STORE_CTX	*ctx;
 static struct auth_tree	 auths = RB_INITIALIZER(&auths);
@@ -155,6 +157,41 @@ proc_parser_roa(char *file, const unsigned char *der, size_t len,
 	roa->expires = x509_find_expires(roa->notafter, a, &crlt);
 
 	return roa;
+}
+
+/*
+ * Parse and validate a draft-ietf-sidrops-rpki-prefixlist SPL.
+ * Returns the spl on success, NULL on failure.
+ */
+static struct spl *
+proc_parser_spl(char *file, const unsigned char *der, size_t len,
+    const struct entity *entp)
+{
+	struct spl		*spl;
+	struct auth		*a;
+	struct crl		*crl;
+	X509			*x509;
+	const char		*errstr;
+
+	if ((spl = spl_parse(&x509, file, entp->talid, der, len)) == NULL)
+		return NULL;
+
+	a = valid_ski_aki(file, &auths, spl->ski, spl->aki, entp->mftaki);
+	crl = crl_get(&crlt, a);
+
+	if (!valid_x509(file, ctx, x509, a, crl, &errstr)) {
+		warnx("%s: %s", file, errstr);
+		X509_free(x509);
+		spl_free(spl);
+		return NULL;
+	}
+	X509_free(x509);
+
+	spl->talid = a->cert->talid;
+
+	spl->expires = x509_find_expires(spl->notafter, a, &crlt);
+
+	return spl;
 }
 
 /*
@@ -633,7 +670,7 @@ proc_parser_tak(char *file, const unsigned char *der, size_t len,
 	}
 
 	/* TAK EE must be signed by self-signed CA */
-	if (a->parent != NULL)
+	if (a->issuer != NULL)
 		goto out;
 
 	tak->talid = a->cert->talid;
@@ -681,6 +718,7 @@ parse_entity(struct entityq *q, struct msgbuf *msgq)
 	struct aspa	*aspa;
 	struct gbr	*gbr;
 	struct tak	*tak;
+	struct spl	*spl;
 	struct ibuf	*b;
 	unsigned char	*f;
 	time_t		 mtime, crlmtime;
@@ -821,6 +859,25 @@ parse_entity(struct entityq *q, struct msgbuf *msgq)
 				mtime = tak->signtime;
 			io_simple_buffer(b, &mtime, sizeof(mtime));
 			tak_free(tak);
+			break;
+		case RTYPE_SPL:
+			file = parse_load_file(entp, &f, &flen);
+			io_str_buffer(b, file);
+			if (experimental) {
+				spl = proc_parser_spl(file, f, flen, entp);
+				if (spl != NULL)
+					mtime = spl->signtime;
+			} else {
+				if (verbose > 0)
+					warnx("%s: skipped", file);
+				spl = NULL;
+			}
+			io_simple_buffer(b, &mtime, sizeof(mtime));
+			c = (spl != NULL);
+			io_simple_buffer(b, &c, sizeof(int));
+			if (spl != NULL)
+				spl_buffer(b, spl);
+			spl_free(spl);
 			break;
 		case RTYPE_CRL:
 		default:

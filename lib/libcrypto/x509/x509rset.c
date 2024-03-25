@@ -1,4 +1,4 @@
-/* $OpenBSD: x509rset.c,v 1.12 2023/02/16 08:38:17 tb Exp $ */
+/* $OpenBSD: x509rset.c,v 1.14 2024/03/25 12:10:57 jsing Exp $ */
 /* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
  * All rights reserved.
  *

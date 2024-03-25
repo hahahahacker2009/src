@@ -1,4 +1,4 @@
-/*	$OpenBSD: ip6_output.c,v 1.286 2024/02/13 12:22:09 bluhm Exp $	*/
+/*	$OpenBSD: ip6_output.c,v 1.288 2024/02/28 10:57:20 bluhm Exp $	*/
 /*	$KAME: ip6_output.c,v 1.172 2001/03/25 09:55:56 itojun Exp $	*/
 
 /*
@@ -480,7 +480,7 @@ reroute:
 			goto bad;
 		}
 	} else {
-		route6_cache(ro, &ip6->ip6_dst, m->m_pkthdr.ph_rtableid);
+		route6_cache(ro, &ip6->ip6_dst, NULL, m->m_pkthdr.ph_rtableid);
 	}
 
 	if (rt && (rt->rt_flags & RTF_GATEWAY) &&
@@ -748,8 +748,16 @@ reroute:
 	    (error = if_output_ml(ifp, &ml, sin6tosa(dst), ro->ro_rt)))
 		goto done;
 	ip6stat_inc(ip6s_fragmented);
+	goto done;
 
-done:
+ freehdrs:
+	m_freem(exthdrs.ip6e_hbh);	/* m_freem will check if mbuf is 0 */
+	m_freem(exthdrs.ip6e_dest1);
+	m_freem(exthdrs.ip6e_rthdr);
+	m_freem(exthdrs.ip6e_dest2);
+ bad:
+	m_freem(m);
+ done:
 	if (ro == &iproute && ro->ro_rt) {
 		rtfree(ro->ro_rt);
 	} else if (ro_pmtu == &iproute && ro_pmtu->ro_rt) {
@@ -760,16 +768,6 @@ done:
 	tdb_unref(tdb);
 #endif /* IPSEC */
 	return (error);
-
-freehdrs:
-	m_freem(exthdrs.ip6e_hbh);	/* m_freem will check if mbuf is 0 */
-	m_freem(exthdrs.ip6e_dest1);
-	m_freem(exthdrs.ip6e_rthdr);
-	m_freem(exthdrs.ip6e_dest2);
-	/* FALLTHROUGH */
-bad:
-	m_freem(m);
-	goto done;
 }
 
 int

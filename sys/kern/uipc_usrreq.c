@@ -1,4 +1,4 @@
-/*	$OpenBSD: uipc_usrreq.c,v 1.200 2023/11/28 09:29:20 jsg Exp $	*/
+/*	$OpenBSD: uipc_usrreq.c,v 1.202 2024/03/22 17:34:11 mvs Exp $	*/
 /*	$NetBSD: uipc_usrreq.c,v 1.18 1996/02/09 19:00:50 christos Exp $	*/
 
 /*
@@ -415,6 +415,8 @@ uipc_listen(struct socket *so)
 {
 	struct unpcb *unp = sotounpcb(so);
 
+	if (unp->unp_flags & (UNP_BINDING | UNP_CONNECTING))
+		return (EINVAL);
 	if (unp->unp_vnode == NULL)
 		return (EINVAL);
 	return (0);
@@ -1436,7 +1438,7 @@ unp_gc(void *arg __unused)
 				 */
 				so = unp->unp_socket;
 				solock(so);
-				unp_scan(so->so_rcv.sb_mb, unp_discard);
+				sorflush(so);
 				sounlock(so);
 			}
 		}

@@ -1,4 +1,4 @@
-# $OpenBSD: RAMDISK,v 1.213 2024/02/15 16:33:54 deraadt Exp $
+# $OpenBSD: RAMDISK,v 1.215 2024/03/24 22:34:48 patrick Exp $
 
 machine		arm64
 maxusers	4
@@ -239,6 +239,8 @@ rkpcie*		at fdt?
 pci*		at rkpcie?
 rkpwm*		at fdt?
 rkrng*		at fdt?
+rkspi*		at fdt?
+rkpmic*		at spi?
 rkdwusb*	at fdt?
 dwmmc*		at fdt?
 sdmmc*		at dwmmc?
@@ -287,6 +289,7 @@ iic*		at sxitwi?	# I2C bus
 dwxe*		at fdt?
 
 # Xilinx Zynq UltraScale+ SoCs
+cad*		at fdt?			# Ethernet controller
 cduart*		at fdt?
 
 # PCI

@@ -1,4 +1,4 @@
-/*	$OpenBSD: bgpd.h,v 1.485 2024/02/13 16:35:43 claudio Exp $ */
+/*	$OpenBSD: bgpd.h,v 1.489 2024/03/22 15:41:34 claudio Exp $ */
 
 /*
  * Copyright (c) 2003, 2004 Henning Brauer <henning@openbsd.org>
@@ -37,7 +37,7 @@
 #define	RTR_PORT			323
 #define	CONFFILE			"/etc/bgpd.conf"
 #define	BGPD_USER			"_bgpd"
-#define	PEER_DESCR_LEN			32
+#define	PEER_DESCR_LEN			64
 #define	REASON_LEN			256	/* includes NUL terminator */
 #define	PFTABLE_LEN			32
 #define	ROUTELABEL_LEN			32
@@ -408,6 +408,17 @@ struct capabilities {
 	int8_t	policy;			/* Open Policy, RFC 9234, 2 = enforce */
 };
 
+enum capa_codes {
+	CAPA_NONE = 0,
+	CAPA_MP = 1,
+	CAPA_REFRESH = 2,
+	CAPA_ROLE = 9,
+	CAPA_RESTART = 64,
+	CAPA_AS4BYTE = 65,
+	CAPA_ADD_PATH = 69,
+	CAPA_ENHANCED_RR = 70,
+};
+
 /* flags for RFC 4724 - graceful restart */
 #define	CAPA_GR_PRESENT		0x01
 #define	CAPA_GR_RESTART		0x02
@@ -705,7 +716,8 @@ enum err_codes {
 	ERR_HOLDTIMEREXPIRED,
 	ERR_FSM,
 	ERR_CEASE,
-	ERR_RREFRESH
+	ERR_RREFRESH,
+	ERR_SENDHOLDTIMEREXPIRED,
 };
 
 enum suberr_update {
@@ -1533,6 +1545,7 @@ int	trie_equal(struct trie_head *, struct trie_head *);
 time_t			 getmonotime(void);
 
 /* util.c */
+char		*ibuf_get_string(struct ibuf *, size_t);
 const char	*log_addr(const struct bgpd_addr *);
 const char	*log_in6addr(const struct in6_addr *);
 const char	*log_sockaddr(struct sockaddr *, socklen_t);
@@ -1545,6 +1558,7 @@ const char	*log_roa(struct roa *);
 const char	*log_aspa(struct aspa_set *);
 const char	*log_rtr_error(enum rtr_error);
 const char	*log_policy(enum role);
+const char	*log_capability(uint8_t);
 int		 aspath_asprint(char **, struct ibuf *);
 uint32_t	 aspath_extract(const void *, int);
 int		 aspath_verify(struct ibuf *, int, int);
